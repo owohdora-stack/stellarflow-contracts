@@ -33,6 +33,8 @@ pub enum DataKey {
     Destroyed,
     /// Asset decimal metadata (base_decimals, quote_decimals).
     AssetMeta(Symbol),
+    /// Lightweight asset metadata stored separately from hot-path price data.
+    AssetInfo(Symbol),
     /// List of contracts subscribed to price update callbacks.
     PriceUpdateSubscribers,
     /// Tracked asset flag for O(1) existence check.
@@ -51,7 +53,22 @@ pub struct AssetMeta {
     /// Native decimal precision of the quote asset (e.g. 2 for NGN).
     pub quote_decimals: u32,
 }
-/// Canonical storage format for a price entry.
+
+/// Lightweight metadata for an asset.
+
+/// `name` uses `Symbol` instead of `String` because short values are stored
+/// more efficiently on-chain. Longer descriptions should use
+/// `DataKey::AssetDescription(asset)` instead.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetInfo {
+    /// Short human-readable asset name, max 32 characters.
+    pub name: Symbol,
+    /// Native decimal precision of the base asset.
+    pub base_decimals: u32,
+    /// Native decimal precision of the quote asset.
+    pub quote_decimals: u32,
+}
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceData {

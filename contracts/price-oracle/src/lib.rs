@@ -4,8 +4,11 @@ use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, panic_with_error, Address, Env, Symbol, String, token,
 };
 
-use crate::types::{DataKey, PriceBounds, PriceBuffer, PriceBufferEntry, PriceData, PriceDataWithStatus, PriceEntryWithStatus, RecentEvent, AdminAction, AdminLogEntry, PriceUpdatePayload, ProposedAction};
-
+use crate::types::{
+    AssetInfo, AssetMeta, DataKey, PriceBounds, PriceBuffer, PriceBufferEntry, PriceData,
+    PriceDataWithStatus, PriceEntryWithStatus, RecentEvent, AdminAction,
+    AdminLogEntry, PriceUpdatePayload, ProposedAction,
+};
 const ADMIN_TIMELOCK: u64 = 86_400;
 const MAX_CLEAR_ASSETS: u32 = 20;
 
@@ -16,6 +19,19 @@ const MAX_CLEAR_ASSETS: u32 = 20;
 /// when callers only need the scalar price value.
 #[contractclient(name = "StellarFlowClient")]
 pub trait StellarFlowTrait {
+    /// Set lightweight metadata for an asset.
+    fn set_asset_info(
+        env: Env,
+        admin: Address,
+        asset: Symbol,
+        name: Symbol,
+        base_decimals: u32,
+        quote_decimals: u32,
+    );
+
+    /// Get lightweight metadata for an asset.
+    fn get_asset_info(env: Env, asset: Symbol) -> Option<crate::types::AssetInfo>;
+
     /// Get the full price data for a specific asset.
     ///
     /// When `verified` is `true`, reads from the `VerifiedPrice` bucket (default for internal math).
@@ -23,6 +39,8 @@ pub trait StellarFlowTrait {
     /// Returns `Error::AssetNotFound` if the asset does not exist or the price is stale.
     fn get_price(env: Env, asset: Symbol, verified: bool) -> Result<PriceData, Error>;
 
+    // rest of trait...
+}
     /// Calculate the weighted average price of a multi-asset index basket.
     ///
     /// # Arguments
@@ -733,6 +751,40 @@ impl PriceOracle {
             .persistent()
             .get(&DataKey::AssetMeta(asset))
     }
+/// Set lightweight metadata for an asset.
+///
+/// `name` must be a short Symbol. Longer descriptions should be stored
+/// separately with `set_asset_description`.
+pub fn set_asset_info(
+    env: Env,
+    admin: Address,
+    asset: Symbol,
+    name: Symbol,
+    base_decimals: u32,
+    quote_decimals: u32,
+) {
+    _require_not_destroyed(&env);
+    crate::auth::_require_not_frozen(&env);
+    admin.require_auth();
+    crate::auth::_require_authorized(&env, &admin);
+
+    let info = AssetInfo {
+        name,
+        base_decimals,
+        quote_decimals,
+    };
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::AssetInfo(asset), &info);
+}
+
+/// Get lightweight metadata for an asset.
+pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AssetInfo(asset))
+}
 
     /// Return the current admin addresses.
     pub fn get_admin(env: Env) -> Address {
