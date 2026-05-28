@@ -95,6 +95,14 @@ pub struct AssetInfo {
     /// Native decimal precision of the quote asset.
     pub quote_decimals: u32,
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetWeight {
+    pub asset: Symbol,
+    pub weight: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceData {

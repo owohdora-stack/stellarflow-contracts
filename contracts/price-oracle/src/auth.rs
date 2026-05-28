@@ -9,6 +9,7 @@ pub enum DataKey {
     Admin,
     Provider(Address),
     ProviderWeight(Address),
+    VoteDelegate(Address),
     IsPaused,
     ActiveRelayers,
     CommunityCouncil,
@@ -162,6 +163,69 @@ pub fn _get_provider_weight(env: &Env, provider: &Address) -> u32 {
         .unwrap_or(0)
 }
 
+pub fn _set_vote_delegate(env: &Env, owner: &Address, delegate: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::VoteDelegate(owner.clone()), delegate);
+}
+
+pub fn _get_vote_delegate(env: &Env, owner: &Address) -> Option<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::VoteDelegate(owner.clone()))
+}
+
+pub fn _remove_vote_delegate(env: &Env, owner: &Address) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::VoteDelegate(owner.clone()));
+}
+
+pub fn _get_delegated_voters(env: &Env, delegate: &Address) -> Vec<Address> {
+    let admins = _get_admin(env);
+    let mut delegated = Vec::new(env);
+
+    for admin in admins.iter() {
+        if _get_vote_delegate(env, &admin)
+            .map(|stored_delegate| stored_delegate == *delegate)
+            .unwrap_or(false)
+        {
+            delegated.push_back(admin);
+        }
+    }
+
+    delegated
+}
+
+pub fn _add_effective_action_votes(env: &Env, action_id: u64, voter: &Address) -> u32 {
+    let admins = _get_admin(env);
+    let mut voters = _get_action_votes(env, action_id);
+
+    if admins.iter().any(|admin| admin == *voter) && _get_vote_delegate(env, voter).is_none() {
+        if !voters.iter().any(|existing| existing == voter) {
+            voters.push_back(voter.clone());
+        }
+    }
+
+    for admin in admins.iter() {
+        if admin == *voter {
+            continue;
+        }
+
+        if _get_vote_delegate(env, &admin)
+            .map(|delegate| delegate == *voter)
+            .unwrap_or(false)
+            && !voters.iter().any(|existing| existing == admin)
+        {
+            voters.push_back(admin);
+        }
+    }
+
+    let vote_count = voters.len();
+    _set_action_votes(env, action_id, &voters);
+    vote_count
+}
+
 /// Get the list of all active relayers (whitelisted providers).
 pub fn _get_active_relayers(env: &Env) -> Vec<Address> {
     env.storage()
@@ -175,7 +239,9 @@ fn _add_to_active_relayers(env: &Env, provider: &Address) {
     let mut relayers = _get_active_relayers(env);
     if !relayers.iter().any(|r| r == *provider) {
         relayers.push_back(provider.clone());
-        env.storage().instance().set(&DataKey::ActiveRelayers, &relayers);
+        env.storage()
+            .instance()
+            .set(&DataKey::ActiveRelayers, &relayers);
     }
 }
 
@@ -188,7 +254,9 @@ fn _remove_from_active_relayers(env: &Env, provider: &Address) {
             filtered.push_back(relayer);
         }
     }
-    env.storage().instance().set(&DataKey::ActiveRelayers, &filtered);
+    env.storage()
+        .instance()
+        .set(&DataKey::ActiveRelayers, &filtered);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,7 +265,9 @@ fn _remove_from_active_relayers(env: &Env, provider: &Address) {
 
 /// Set the Community Council address for emergency freeze functionality.
 pub fn _set_council(env: &Env, council: &Address) {
-    env.storage().instance().set(&DataKey::CommunityCouncil, council);
+    env.storage()
+        .instance()
+        .set(&DataKey::CommunityCouncil, council);
 }
 
 /// Get the Community Council address.
@@ -207,7 +277,9 @@ pub fn _get_council(env: &Env) -> Option<Address> {
 
 /// Check if the caller is the Community Council.
 pub fn _is_council(env: &Env, caller: &Address) -> bool {
-    _get_council(env).map(|council| council == *caller).unwrap_or(false)
+    _get_council(env)
+        .map(|council| council == *caller)
+        .unwrap_or(false)
 }
 
 /// Panic if the caller is not the Community Council.
@@ -227,7 +299,9 @@ pub fn _is_frozen(env: &Env) -> bool {
 
 /// Set the emergency freeze state.
 pub fn _set_frozen(env: &Env, frozen: bool) {
-    env.storage().instance().set(&DataKey::EmergencyFrozen, &frozen);
+    env.storage()
+        .instance()
+        .set(&DataKey::EmergencyFrozen, &frozen);
 }
 
 /// Panic if the contract is in emergency freeze state.
@@ -243,12 +317,16 @@ pub fn _require_not_frozen(env: &Env) {
 
 /// Store the expiry timestamp for the safety-checks bypass.
 pub fn _set_bypass_safety_checks(env: &Env, expiry: u64) {
-    env.storage().instance().set(&DataKey::BypassSafetyChecks, &expiry);
+    env.storage()
+        .instance()
+        .set(&DataKey::BypassSafetyChecks, &expiry);
 }
 
 /// Remove the safety-checks bypass (disables it immediately).
 pub fn _remove_bypass_safety_checks(env: &Env) {
-    env.storage().instance().remove(&DataKey::BypassSafetyChecks);
+    env.storage()
+        .instance()
+        .remove(&DataKey::BypassSafetyChecks);
 }
 
 /// Return the expiry timestamp of the safety-checks bypass, or None if not set.
@@ -327,7 +405,7 @@ pub fn _has_reached_threshold(env: &Env, action_id: u64, threshold: u32) -> bool
     let voters = _get_action_votes(env, action_id);
     let admins = _get_admin(env);
     let admin_count = admins.len() as u32;
-    
+
     // Threshold is met if we have at least `threshold` votes
     // Default: 3 out of 5 admins required
     voters.len() >= threshold
@@ -337,7 +415,7 @@ pub fn _has_reached_threshold(env: &Env, action_id: u64, threshold: u32) -> bool
 pub fn _get_required_threshold(env: &Env) -> u32 {
     let admins = _get_admin(env);
     let admin_count = admins.len() as u32;
-    
+
     // Require 3/5 (or majority if fewer than 5 admins)
     // For 3 admins: need 2 (majority)
     // For 4 admins: need 3
@@ -456,12 +534,12 @@ mod auth_tests {
         env.as_contract(&contract_id, || {
             assert!(_is_authorized(&env, &admin1));
             assert!(!_is_authorized(&env, &admin2));
-            
+
             _add_authorized(&env, &admin2);
-            
+
             assert!(_is_authorized(&env, &admin1));
             assert!(_is_authorized(&env, &admin2));
-            
+
             let admins = _get_admin(&env);
             assert_eq!(admins.len(), 2);
         });
@@ -473,9 +551,9 @@ mod auth_tests {
         env.as_contract(&contract_id, || {
             let admins_before = _get_admin(&env);
             assert_eq!(admins_before.len(), 1);
-            
+
             _add_authorized(&env, &admin);
-            
+
             let admins_after = _get_admin(&env);
             assert_eq!(admins_after.len(), 1); // no duplicate added
         });
@@ -488,9 +566,9 @@ mod auth_tests {
         env.as_contract(&contract_id, || {
             _add_authorized(&env, &admin2);
             assert_eq!(_get_admin(&env).len(), 2);
-            
+
             _remove_authorized(&env, &admin1);
-            
+
             assert!(!_is_authorized(&env, &admin1));
             assert!(_is_authorized(&env, &admin2));
             assert_eq!(_get_admin(&env).len(), 1);
@@ -618,10 +696,10 @@ mod auth_tests {
         env.as_contract(&contract_id, || {
             _add_provider(&env, &provider);
             assert_eq!(_get_provider_weight(&env, &provider), 0);
-            
+
             _set_provider_weight(&env, &provider, 75);
             assert_eq!(_get_provider_weight(&env, &provider), 75);
-            
+
             _set_provider_weight(&env, &provider, 100);
             assert_eq!(_get_provider_weight(&env, &provider), 100);
         });
@@ -637,6 +715,52 @@ mod auth_tests {
     }
 
     // ── Renounce ownership tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_set_get_and_remove_vote_delegate() {
+        let (env, contract_id, admin) = setup();
+        let delegate = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+        env.as_contract(&contract_id, || {
+            assert_eq!(_get_vote_delegate(&env, &admin), None);
+
+            _set_vote_delegate(&env, &admin, &delegate);
+            assert_eq!(_get_vote_delegate(&env, &admin), Some(delegate.clone()));
+
+            _remove_vote_delegate(&env, &admin);
+            assert_eq!(_get_vote_delegate(&env, &admin), None);
+        });
+    }
+
+    #[test]
+    fn test_vote_delegate_can_be_reassigned() {
+        let (env, contract_id, admin) = setup();
+        let delegate1 = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+        let delegate2 = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+        env.as_contract(&contract_id, || {
+            _set_vote_delegate(&env, &admin, &delegate1);
+            assert_eq!(_get_vote_delegate(&env, &admin), Some(delegate1));
+
+            _set_vote_delegate(&env, &admin, &delegate2);
+            assert_eq!(_get_vote_delegate(&env, &admin), Some(delegate2));
+        });
+    }
+
+    #[test]
+    fn test_delegated_vote_weight_routes_to_proxy() {
+        let (env, contract_id, admin1) = setup();
+        let admin2 = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+        let proxy = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+        env.as_contract(&contract_id, || {
+            _add_authorized(&env, &admin2);
+            _set_vote_delegate(&env, &admin1, &proxy);
+            _set_action_votes(&env, 1, &Vec::new(&env));
+
+            assert_eq!(_add_effective_action_votes(&env, 1, &proxy), 1);
+            assert_eq!(_get_action_votes(&env, 1).get(0).unwrap(), admin1);
+
+            assert_eq!(_add_effective_action_votes(&env, 1, &admin2), 2);
+        });
+    }
 
     #[test]
     fn test_renounce_ownership_removes_all_admins() {

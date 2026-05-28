@@ -168,7 +168,6 @@ pub fn calculate_inverse_price(price: i128, decimals: u32) -> Option<i128> {
 mod tests {
     use super::*;
     use soroban_sdk::Env;
-    feat/190-multi-asset-index-price
 
     // --- format_price tests ---------------------------------------------------
 

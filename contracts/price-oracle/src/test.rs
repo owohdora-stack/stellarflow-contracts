@@ -3,7 +3,7 @@
 use super::*;
 use soroban_sdk::{
     contract, contractimpl, symbol_short, testutils::Address as _, testutils::Events,
-    testutils::Ledger, Address, Env, Symbol, vec,
+    testutils::Ledger, vec, Address, Env, Symbol,
 };
 
 #[soroban_sdk::contractevent]
@@ -50,20 +50,29 @@ fn add_provider(env: &Env, contract_id: &Address, provider: &Address) {
 fn test_get_index_price() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     // Setup Oracle & Admin...
     // Add assets: NGN, GHS, CFA...
     // Set prices for NGN, GHS, CFA...
 
     let components = soroban_sdk::vec![
         &env,
-        AssetWeight { asset: symbol_short!("NGN"), weight: 4000 }, // 40%
-        AssetWeight { asset: symbol_short!("GHS"), weight: 3000 }, // 30%
-        AssetWeight { asset: symbol_short!("CFA"), weight: 3000 }, // 30%
+        AssetWeight {
+            asset: symbol_short!("NGN"),
+            weight: 4000
+        }, // 40%
+        AssetWeight {
+            asset: symbol_short!("GHS"),
+            weight: 3000
+        }, // 30%
+        AssetWeight {
+            asset: symbol_short!("CFA"),
+            weight: 3000
+        }, // 30%
     ];
 
     let index_price = client.get_index_price(&components);
-    
+
     // Assert the index_price equals the expected mathematical weighted average
 }
 
@@ -507,7 +516,11 @@ fn test_update_price_emits_cross_call_event_on_5pct_move() {
     let events = env.events().all();
     let debug_str = alloc::format!("{:?}", events);
     // "cross_call" topic must be present
-    assert!(debug_str.contains("cross_call"), "expected cross_call event, got: {}", debug_str);
+    assert!(
+        debug_str.contains("cross_call"),
+        "expected cross_call event, got: {}",
+        debug_str
+    );
 }
 
 #[test]
@@ -538,7 +551,10 @@ fn test_update_price_no_cross_call_event_below_5pct() {
 
     let events = env.events().all();
     let debug_str = alloc::format!("{:?}", events);
-    assert!(!debug_str.contains("cross_call"), "cross_call should NOT fire below 5%");
+    assert!(
+        !debug_str.contains("cross_call"),
+        "cross_call should NOT fire below 5%"
+    );
 }
 
 #[test]
@@ -693,26 +709,17 @@ fn test_price_volatility_decrease() {
 
 #[test]
 fn test_price_volatility_no_change() {
-    assert_eq!(
-        calculate_price_volatility(500_000, 500_000),
-        Some(0)
-    );
+    assert_eq!(calculate_price_volatility(500_000, 500_000), Some(0));
 }
 
 #[test]
 fn test_price_volatility_from_zero() {
-    assert_eq!(
-        calculate_price_volatility(0, 1_000_000),
-        Some(1_000_000)
-    );
+    assert_eq!(calculate_price_volatility(0, 1_000_000), Some(1_000_000));
 }
 
 #[test]
 fn test_price_volatility_to_zero() {
-    assert_eq!(
-        calculate_price_volatility(1_000_000, 0),
-        Some(1_000_000)
-    );
+    assert_eq!(calculate_price_volatility(1_000_000, 0), Some(1_000_000));
 }
 
 #[test]
@@ -722,15 +729,24 @@ fn test_is_stale_with_mocked_ledger_time() {
     let current_time = 2000u64;
     let stored_timestamp = 1000u64;
     let ttl = 500u64;
-    
-    assert!(is_stale(current_time, stored_timestamp, ttl), "Price should be stale");
-    
+
+    assert!(
+        is_stale(current_time, stored_timestamp, ttl),
+        "Price should be stale"
+    );
+
     // Additional test: not stale case
     // current_time < stored_timestamp + ttl should return false
-    assert!(!is_stale(1400u64, 1000u64, 500u64), "Price should not be stale when within TTL");
-    
+    assert!(
+        !is_stale(1400u64, 1000u64, 500u64),
+        "Price should not be stale when within TTL"
+    );
+
     // Edge case: exactly at expiration boundary
-    assert!(is_stale(1500u64, 1000u64, 500u64), "Price should be stale at expiration boundary");
+    assert!(
+        is_stale(1500u64, 1000u64, 500u64),
+        "Price should be stale at expiration boundary"
+    );
 }
 
 // ============================================================================
@@ -969,7 +985,10 @@ fn test_dummy_consumer_calls_oracle_successfully() {
     // The Dummy contract calls the Oracle to get the price
     let fetched_price = dummy_client.get_oracle_price(&oracle_id, &ngn);
 
-    assert_eq!(fetched_price, price, "Dummy contract should receive correct price from Oracle");
+    assert_eq!(
+        fetched_price, price,
+        "Dummy contract should receive correct price from Oracle"
+    );
 }
 
 #[test]
@@ -1030,7 +1049,10 @@ fn test_dummy_consumer_safe_price_fetch() {
 
     // Safely fetch non-existing price (should return None, not panic)
     let missing_price = dummy_client.try_get_oracle_price_data(&oracle_id, &btc);
-    assert!(missing_price.is_none(), "Should return None for non-existent asset");
+    assert!(
+        missing_price.is_none(),
+        "Should return None for non-existent asset"
+    );
 }
 
 #[test]
@@ -1515,7 +1537,14 @@ fn test_update_price_no_bounds_set_allows_any_valid_price() {
     client.add_asset(&admin, &asset);
 
     // No bounds set — should accept any positive price
-    let result = client.try_update_price(&provider, &asset, &999_999_999_i128, &6u32, &100u32, &3600u64);
+    let result = client.try_update_price(
+        &provider,
+        &asset,
+        &999_999_999_i128,
+        &6u32,
+        &100u32,
+        &3600u64,
+    );
     assert!(result.is_ok());
 }
 
@@ -1574,9 +1603,18 @@ fn test_set_price_emits_asset_added_event_on_first_add() {
     // Verify AssetAdded event was emitted
     let events = env.events().all();
     let debug_str = alloc::format!("{:?}", events);
-    assert!(debug_str.contains("asset_added_event"), "AssetAdded event should be emitted for new asset");
-    assert!(debug_str.contains("symbol"), "Event should contain symbol field");
-    assert!(debug_str.contains("NGN"), "Event should contain the correct asset symbol");
+    assert!(
+        debug_str.contains("asset_added_event"),
+        "AssetAdded event should be emitted for new asset"
+    );
+    assert!(
+        debug_str.contains("symbol"),
+        "Event should contain symbol field"
+    );
+    assert!(
+        debug_str.contains("NGN"),
+        "Event should contain the correct asset symbol"
+    );
 }
 
 #[test]
@@ -1593,7 +1631,10 @@ fn test_set_price_does_not_emit_asset_added_event_on_update() {
     // Verify first event was emitted
     let events_after_first = env.events().all();
     let debug_str_first = alloc::format!("{:?}", events_after_first);
-    assert!(debug_str_first.contains("asset_added_event"), "Should emit AssetAdded on first set");
+    assert!(
+        debug_str_first.contains("asset_added_event"),
+        "Should emit AssetAdded on first set"
+    );
 
     // Second set (update) - should NOT emit AssetAdded
     env.ledger().set_timestamp(1_234_567_900);
@@ -1603,7 +1644,10 @@ fn test_set_price_does_not_emit_asset_added_event_on_update() {
     let events_after_second = env.events().all();
     let debug_str_second = alloc::format!("{:?}", events_after_second);
     // Should NOT contain asset_added_event on update
-    assert!(!debug_str_second.contains("asset_added_event"), "Should NOT emit AssetAdded on update");
+    assert!(
+        !debug_str_second.contains("asset_added_event"),
+        "Should NOT emit AssetAdded on update"
+    );
 }
 
 #[test]
@@ -1620,21 +1664,30 @@ fn test_multiple_assets_added_sequentially_each_emits_event() {
     client.set_price(&ngn, &1_500_i128, &2u32, &3600u64);
     let events_ngn = env.events().all();
     let debug_ngn = alloc::format!("{:?}", events_ngn);
-    assert!(debug_ngn.contains("asset_added_event"), "Should emit AssetAdded for NGN");
+    assert!(
+        debug_ngn.contains("asset_added_event"),
+        "Should emit AssetAdded for NGN"
+    );
     assert!(debug_ngn.contains("NGN"), "Should contain NGN symbol");
 
     // Add KES - should emit AssetAdded
     client.set_price(&kes, &800_i128, &2u32, &3600u64);
     let events_kes = env.events().all();
     let debug_kes = alloc::format!("{:?}", events_kes);
-    assert!(debug_kes.contains("asset_added_event"), "Should emit AssetAdded for KES");
+    assert!(
+        debug_kes.contains("asset_added_event"),
+        "Should emit AssetAdded for KES"
+    );
     assert!(debug_kes.contains("KES"), "Should contain KES symbol");
 
     // Add GHS - should emit AssetAdded
     client.set_price(&ghs, &5_000_i128, &2u32, &3600u64);
     let events_ghs = env.events().all();
     let debug_ghs = alloc::format!("{:?}", events_ghs);
-    assert!(debug_ghs.contains("asset_added_event"), "Should emit AssetAdded for GHS");
+    assert!(
+        debug_ghs.contains("asset_added_event"),
+        "Should emit AssetAdded for GHS"
+    );
     assert!(debug_ghs.contains("GHS"), "Should contain GHS symbol");
 }
 
@@ -1651,27 +1704,39 @@ fn test_mixed_add_and_update_emits_correct_events() {
     client.set_price(&ngn, &1_500_i128, &2u32, &3600u64);
     let events_ngn = env.events().all();
     let debug_ngn = alloc::format!("{:?}", events_ngn);
-    assert!(debug_ngn.contains("asset_added_event"), "Should emit AssetAdded for NGN");
+    assert!(
+        debug_ngn.contains("asset_added_event"),
+        "Should emit AssetAdded for NGN"
+    );
 
     // Add KES (new asset) - should emit AssetAdded
     client.set_price(&kes, &800_i128, &2u32, &3600u64);
     let events_kes = env.events().all();
     let debug_kes = alloc::format!("{:?}", events_kes);
-    assert!(debug_kes.contains("asset_added_event"), "Should emit AssetAdded for KES");
+    assert!(
+        debug_kes.contains("asset_added_event"),
+        "Should emit AssetAdded for KES"
+    );
 
     // Update NGN (existing asset) - should NOT emit AssetAdded
     env.ledger().set_timestamp(1_234_567_900);
     client.set_price(&ngn, &1_600_i128, &2u32, &3600u64);
     let events_update = env.events().all();
     let debug_update = alloc::format!("{:?}", events_update);
-    assert!(!debug_update.contains("asset_added_event"), "Should NOT emit AssetAdded on update");
+    assert!(
+        !debug_update.contains("asset_added_event"),
+        "Should NOT emit AssetAdded on update"
+    );
 
     // Add GHS (new asset) - should emit AssetAdded
     let ghs = symbol_short!("GHS");
     client.set_price(&ghs, &5_000_i128, &2u32, &3600u64);
     let events_ghs = env.events().all();
     let debug_ghs = alloc::format!("{:?}", events_ghs);
-    assert!(debug_ghs.contains("asset_added_event"), "Should emit AssetAdded for GHS");
+    assert!(
+        debug_ghs.contains("asset_added_event"),
+        "Should emit AssetAdded for GHS"
+    );
 }
 
 #[test]
@@ -1687,8 +1752,14 @@ fn test_asset_added_event_contains_correct_symbol() {
     // Verify event structure contains the correct symbol
     let events = env.events().all();
     let debug_str = alloc::format!("{:?}", events);
-    assert!(debug_str.contains("asset_added_event"), "Should emit AssetAdded event");
-    assert!(debug_str.contains("NGN"), "Event should contain the correct asset symbol");
+    assert!(
+        debug_str.contains("asset_added_event"),
+        "Should emit AssetAdded event"
+    );
+    assert!(
+        debug_str.contains("NGN"),
+        "Event should contain the correct asset symbol"
+    );
 }
 
 #[test]
@@ -1707,7 +1778,7 @@ fn test_get_last_n_events_sliding_window() {
     client.set_price(&kes, &200_i128, &2u32, &3600u64); // 2
     client.set_price(&ghs, &300_i128, &2u32, &3600u64); // 3
     client.set_price(&ngn, &110_i128, &2u32, &3600u64); // 4
-    client.set_price(&kes, &210_i128, &2u32, &3600u64); // 5 
+    client.set_price(&kes, &210_i128, &2u32, &3600u64); // 5
     client.set_price(&ghs, &310_i128, &2u32, &3600u64); // 6 (newest)
 
     let events = client.get_last_n_events(&5);
@@ -1716,7 +1787,10 @@ fn test_get_last_n_events_sliding_window() {
     // Newest first (index 0) is an update because ghs was already added
     assert_eq!(events.get(0).unwrap().asset, ghs);
     assert_eq!(events.get(0).unwrap().price, 310_i128);
-    assert_eq!(events.get(0).unwrap().event_type, Symbol::new(&env, "price_updated"));
+    assert_eq!(
+        events.get(0).unwrap().event_type,
+        Symbol::new(&env, "price_updated")
+    );
 
     assert_eq!(events.get(1).unwrap().asset, kes);
     assert_eq!(events.get(1).unwrap().price, 210_i128);
@@ -2085,7 +2159,7 @@ fn test_full_multi_sig_workflow() {
 
     let contract_id = env.register(PriceOracle, ());
     let client = PriceOracleClient::new(&env, &contract_id);
-    
+
     // Start with 2 admins
     let admin1 = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
     let admin2 = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
@@ -2112,6 +2186,82 @@ fn test_full_multi_sig_workflow() {
     // Step 4: Toggle unpause with remaining admins
     let paused = client.toggle_pause(&admin1, &admin3);
     assert_eq!(paused, false);
+}
+
+#[test]
+fn test_delegate_vote_reassign_and_clear() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+    let proxy1 = Address::generate(&env);
+    let proxy2 = Address::generate(&env);
+
+    assert_eq!(client.get_vote_delegate(&owner), None);
+
+    client.delegate_vote(&owner, &proxy1);
+    assert_eq!(client.get_vote_delegate(&owner), Some(proxy1));
+
+    client.delegate_vote(&owner, &proxy2);
+    assert_eq!(client.get_vote_delegate(&owner), Some(proxy2));
+
+    client.clear_vote_delegate(&owner);
+    assert_eq!(client.get_vote_delegate(&owner), None);
+}
+
+#[test]
+fn test_delegate_proxy_vote_counts_owner_weight() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin1 = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    let proxy = Address::generate(&env);
+
+    client.init_admin(&admin1);
+    env.as_contract(&contract_id, || {
+        crate::auth::_add_authorized(&env, &admin2);
+    });
+
+    client.delegate_vote(&admin2, &proxy);
+    let action_id = client.propose_action(&admin1, &0u32, &None, &String::from_str(&env, ""));
+
+    assert_eq!(client.vote_for_action(&proxy, &action_id), 2);
+    client.execute_proposed_action(&admin1, &action_id);
+    env.as_contract(&contract_id, || {
+        assert!(crate::auth::_is_paused(&env));
+    });
+}
+
+#[test]
+fn test_cleared_delegate_cannot_vote_owner_weight() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin1 = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    let proxy = Address::generate(&env);
+
+    client.init_admin(&admin1);
+    env.as_contract(&contract_id, || {
+        crate::auth::_add_authorized(&env, &admin2);
+    });
+
+    client.delegate_vote(&admin2, &proxy);
+    client.clear_vote_delegate(&admin2);
+    let action_id = client.propose_action(&admin1, &0u32, &None, &String::from_str(&env, ""));
+
+    let result = client.try_vote_for_action(&proxy, &action_id);
+    match result {
+        Err(Ok(e)) => assert_eq!(e, Error::NotAuthorized),
+        other => panic!("expected NotAuthorized, got {:?}", other),
+    }
 }
 
 // ============================================================================
@@ -2255,9 +2405,18 @@ fn test_self_destruct_emits_event() {
 
     let events = env.events().all();
     let debug_str = alloc::format!("{:?}", events);
-    assert!(debug_str.contains("contract_destroyed"), "Should emit contract_destroyed event");
-    assert!(debug_str.contains(&format!("{:?}", admin1)), "Event should contain admin1");
-    assert!(debug_str.contains(&format!("{:?}", admin2)), "Event should contain admin2");
+    assert!(
+        debug_str.contains("contract_destroyed"),
+        "Should emit contract_destroyed event"
+    );
+    assert!(
+        debug_str.contains(&format!("{:?}", admin1)),
+        "Event should contain admin1"
+    );
+    assert!(
+        debug_str.contains(&format!("{:?}", admin2)),
+        "Event should contain admin2"
+    );
 }
 
 #[test]
@@ -2308,7 +2467,10 @@ fn test_subscribe_duplicate_fails() {
     let callback_contract = Address::generate(&env);
 
     // First subscription succeeds
-    assert_eq!(client.try_subscribe_to_price_updates(&callback_contract), Ok(()));
+    assert_eq!(
+        client.try_subscribe_to_price_updates(&callback_contract),
+        Ok(())
+    );
 
     // Duplicate subscription should fail
     let result = client.try_subscribe_to_price_updates(&callback_contract);
@@ -2433,9 +2595,12 @@ fn test_update_price_does_not_crash_with_subscribers() {
     // (The callback will fail because subscriber doesn't implement on_price_update, but update should succeed)
     env.ledger().set_timestamp(1_000_000);
     let result = client.update_price(&provider, &asset, &1_500_000_i128, &6u32, &90u32, &3600u64);
-    
+
     // The update should succeed even if the callback fails
-    assert!(result.is_ok(), "Price update should succeed even with subscribers");
+    assert!(
+        result.is_ok(),
+        "Price update should succeed even with subscribers"
+    );
 
     // Verify price was stored
     let price = client.get_price(&asset, &true);
@@ -2492,7 +2657,10 @@ fn test_get_bypass_expiry_returns_stored_value() {
     env.ledger().set_timestamp(2_000_000);
     client.enable_bypass_safety_checks(&admin);
 
-    assert_eq!(client.get_bypass_safety_checks_expiry(), Some(2_000_000 + 3_600));
+    assert_eq!(
+        client.get_bypass_safety_checks_expiry(),
+        Some(2_000_000 + 3_600)
+    );
 }
 
 #[test]
@@ -2525,7 +2693,8 @@ fn test_bypass_allows_flash_crash_price() {
     client.set_max_deviation_percentage(&admin, &100_i128); // 1%
 
     // Without bypass, a 20% jump should be rejected.
-    let rejected = client.try_update_price(&provider, &asset, &1_200_i128, &2u32, &100u32, &3_600u64);
+    let rejected =
+        client.try_update_price(&provider, &asset, &1_200_i128, &2u32, &100u32, &3_600u64);
     match rejected {
         Err(Ok(err)) => assert_eq!(err, Error::FlashCrashDetected),
         other => panic!("expected FlashCrashDetected, got {:?}", other),
@@ -2534,7 +2703,9 @@ fn test_bypass_allows_flash_crash_price() {
     // Enable bypass and retry — should succeed.
     env.ledger().set_timestamp(1_000_000);
     client.enable_bypass_safety_checks(&admin);
-    assert!(client.try_update_price(&provider, &asset, &1_200_i128, &2u32, &100u32, &3_600u64).is_ok());
+    assert!(client
+        .try_update_price(&provider, &asset, &1_200_i128, &2u32, &100u32, &3_600u64)
+        .is_ok());
 }
 
 #[test]
@@ -2555,7 +2726,9 @@ fn test_bypass_allows_price_outside_bounds() {
     // Enable bypass and submit a price above max_price.
     env.ledger().set_timestamp(1_000_000);
     client.enable_bypass_safety_checks(&admin);
-    assert!(client.try_update_price(&provider, &asset, &2_000_i128, &2u32, &100u32, &3_600u64).is_ok());
+    assert!(client
+        .try_update_price(&provider, &asset, &2_000_i128, &2u32, &100u32, &3_600u64)
+        .is_ok());
 }
 
 #[test]
@@ -2582,7 +2755,10 @@ fn test_bypass_expires_and_circuit_breaker_resumes() {
     let result = client.try_update_price(&provider, &asset, &1_200_i128, &2u32, &100u32, &3_600u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, Error::FlashCrashDetected),
-        other => panic!("expected FlashCrashDetected after bypass expiry, got {:?}", other),
+        other => panic!(
+            "expected FlashCrashDetected after bypass expiry, got {:?}",
+            other
+        ),
     }
 }
 

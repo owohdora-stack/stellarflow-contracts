@@ -1,13 +1,14 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractimpl, panic_with_error, Address, Env, Symbol, String, token,
+    contract, contractclient, contracterror, contractimpl, panic_with_error, token, Address, Env,
+    String, Symbol,
 };
 
 use crate::types::{
-    AssetInfo, AssetMeta, DataKey, PriceBounds, PriceBuffer, PriceBufferEntry, PriceData,
-    PriceDataWithStatus, PriceEntryWithStatus, RecentEvent, AdminAction,
-    AdminLogEntry, PriceUpdatePayload, ProposedAction,
+    AdminAction, AdminLogEntry, AssetInfo, AssetMeta, DataKey, PriceBounds, PriceBuffer,
+    PriceBufferEntry, PriceData, PriceDataWithStatus, PriceEntryWithStatus, PriceUpdatePayload,
+    ProposedAction, RecentEvent,
 };
 const ADMIN_TIMELOCK: u64 = 86_400;
 const MAX_CLEAR_ASSETS: u32 = 20;
@@ -39,13 +40,14 @@ pub trait StellarFlowTrait {
     /// Returns `Error::AssetNotFound` if the asset does not exist or the price is stale.
     fn get_price(env: Env, asset: Symbol, verified: bool) -> Result<PriceData, Error>;
 
-    // rest of trait...
-}
     /// Calculate the weighted average price of a multi-asset index basket.
     ///
     /// # Arguments
     /// * `components` - A vector of AssetWeight defining the basket (e.g., NGN, GHS, CFA).
-    fn get_index_price(env: Env, components: soroban_sdk::Vec<crate::types::AssetWeight>) -> Result<i128, Error>;
+    fn get_index_price(
+        env: Env,
+        components: soroban_sdk::Vec<crate::types::AssetWeight>,
+    ) -> Result<i128, Error>;
 
     /// Get the full price data with freshness status for a specific asset.
     ///
@@ -149,12 +151,22 @@ pub trait StellarFlowTrait {
     /// Register a new admin (requires 2-of-3 existing admin signatures).
     ///
     /// Maximum of 3 admins allowed. Returns error if already at capacity.
-    fn register_admin(env: Env, admin1: Address, admin2: Address, new_admin: Address) -> Result<(), Error>;
+    fn register_admin(
+        env: Env,
+        admin1: Address,
+        admin2: Address,
+        new_admin: Address,
+    ) -> Result<(), Error>;
 
     /// Remove an admin (requires 2-of-3 existing admin signatures).
     ///
     /// Cannot remove the last admin. Returns error if would leave 0 admins.
-    fn remove_admin(env: Env, admin1: Address, admin2: Address, admin_to_remove: Address) -> Result<(), Error>;
+    fn remove_admin(
+        env: Env,
+        admin1: Address,
+        admin2: Address,
+        admin_to_remove: Address,
+    ) -> Result<(), Error>;
 
     /// Get the total number of registered admins.
     fn get_admin_count(env: Env) -> u32;
@@ -162,10 +174,25 @@ pub trait StellarFlowTrait {
     /// Propose a high-impact action that requires multi-signature approval.
     ///
     /// The action will only execute once the threshold (e.g., 3/5) is met.
-    fn propose_action(env: Env, admin: Address, action_type: u32, target: Option<Address>, data: soroban_sdk::String) -> Result<u64, Error>;
+    fn propose_action(
+        env: Env,
+        admin: Address,
+        action_type: u32,
+        target: Option<Address>,
+        data: soroban_sdk::String,
+    ) -> Result<u64, Error>;
 
     /// Vote for a proposed action.
     fn vote_for_action(env: Env, voter: Address, action_id: u64) -> Result<u32, Error>;
+
+    /// Delegate the owner's vote weight to a proxy representative.
+    fn delegate_vote(env: Env, owner: Address, delegate: Address) -> Result<(), Error>;
+
+    /// Remove the owner's active vote delegation.
+    fn clear_vote_delegate(env: Env, owner: Address) -> Result<(), Error>;
+
+    /// Get the proxy representative currently assigned by an owner.
+    fn get_vote_delegate(env: Env, owner: Address) -> Option<Address>;
 
     /// Execute a proposed action that has reached the vote threshold.
     fn execute_proposed_action(env: Env, executor: Address, action_id: u64) -> Result<(), Error>;
@@ -312,10 +339,10 @@ pub enum Error {
     ActionAlreadyExecuted = 18,
     /// Action has been cancelled.
     ActionCancelled = 19,
-    /// Batch clear exceeded the maximum allowed asset count.
-    TooManyAssets = 20,
     /// Contract has been permanently destroyed.
-    ContractDestroyed = 21,
+    ContractDestroyed = 20,
+    /// Delegate assignment is invalid.
+    InvalidDelegate = 21,
 }
 
 #[contract]
@@ -406,9 +433,7 @@ pub fn calculate_percentage_difference_bps(old_price: i128, new_price: i128) -> 
 /// calculate_price_volatility(1_200_000, 1_000_000) => Some(200_000)
 /// ```
 pub fn calculate_price_volatility(old_price: i128, new_price: i128) -> Option<i128> {
-    new_price
-        .checked_sub(old_price)
-        .map(|delta| delta.abs())
+    new_price.checked_sub(old_price).map(|delta| delta.abs())
 }
 
 fn is_valid(price: i128) -> bool {
@@ -450,11 +475,11 @@ fn acquire_lock(env: &Env) -> Result<(), Error> {
         .instance()
         .get(&DataKey::IsLocked)
         .unwrap_or(false);
-    
+
     if is_locked {
         return Err(Error::ReentrancyDetected);
     }
-    
+
     env.storage().instance().set(&DataKey::IsLocked, &true);
     Ok(())
 }
@@ -475,7 +500,9 @@ fn get_tracked_assets(env: &Env) -> soroban_sdk::Vec<Symbol> {
 }
 
 fn _set_tracked_assets(env: &Env, assets: &soroban_sdk::Vec<Symbol>) {
-    env.storage().instance().set(&DataKey::BaseCurrencyPairs, assets);
+    env.storage()
+        .instance()
+        .set(&DataKey::BaseCurrencyPairs, assets);
 }
 
 /// Get the price buffer for a specific asset using a composite (Symbol, u64) key.
@@ -526,7 +553,10 @@ fn clear_stale_buffer(env: &Env, _asset: Symbol, buffer: &mut PriceBuffer) {
 
 /// Check if a provider has already submitted a price in the current buffer.
 fn has_provider_submitted(buffer: &PriceBuffer, provider: &Address) -> bool {
-    buffer.entries.iter().any(|entry| entry.provider == *provider)
+    buffer
+        .entries
+        .iter()
+        .any(|entry| entry.provider == *provider)
 }
 
 /// Calculate the median price from the buffer entries.
@@ -553,7 +583,9 @@ fn _track_asset(env: &Env, asset: Symbol) {
         assets.push_back(asset.clone());
         _set_tracked_assets(env, &assets);
         // Set persistent flag for O(1) existence check
-        env.storage().persistent().set(&DataKey::TrackedAsset(asset), &());
+        env.storage()
+            .persistent()
+            .set(&DataKey::TrackedAsset(asset), &());
     }
 }
 
@@ -577,7 +609,9 @@ fn log_event(env: &Env, event_type: Symbol, asset: Symbol, price: i128) {
         events.pop_back();
     }
 
-    env.storage().instance().set(&DataKey::RecentEvents, &events);
+    env.storage()
+        .instance()
+        .set(&DataKey::RecentEvents, &events);
 }
 
 fn _log_admin_action(env: &Env, admin: &Address, action: AdminAction, details: Option<String>) {
@@ -589,7 +623,9 @@ fn _log_admin_action(env: &Env, admin: &Address, action: AdminAction, details: O
     };
     // Store the admin log entry - using a simple key for now
     // In production, you might want to store multiple entries in a vector
-    env.storage().instance().set(&DataKey::AdminUpdateTimestamp, &entry.timestamp);
+    env.storage()
+        .instance()
+        .set(&DataKey::AdminUpdateTimestamp, &entry.timestamp);
 }
 
 fn read_price_floor(env: &Env, asset: &Symbol) -> Option<i128> {
@@ -651,42 +687,49 @@ impl PriceOracle {
         env.storage()
             .instance()
             .set(&DataKey::BaseCurrencyPairs, &base_currency_pairs);
-        
+
         // Mark contract as initialized
         env.storage().instance().set(&DataKey::Initialized, &true);
     }
 
-    pub fn get_index_price(env: Env, components: soroban_sdk::Vec<crate::types::AssetWeight>) -> Result<i128, Error> {
+    pub fn get_index_price(
+        env: Env,
+        components: soroban_sdk::Vec<crate::types::AssetWeight>,
+    ) -> Result<i128, Error> {
         if components.is_empty() {
-            return Err(Error::AssetNotFound); 
+            return Err(Error::AssetNotFound);
         }
 
         let mut total_weighted_price: i128 = 0;
         let mut total_weight: u32 = 0;
 
         for component in components.iter() {
-            // Fetch the verified price. 
+            // Fetch the verified price.
             // If any asset is missing or stale, this cleanly propagates Error::AssetNotFound.
             let price_data = Self::get_price(env.clone(), component.asset.clone(), true)?;
-            
+
             let weight_i128: i128 = component.weight.into();
-            
+
             // Safe math to prevent overflow panics
-            let weighted_val = price_data.price.checked_mul(weight_i128)
+            let weighted_val = price_data
+                .price
+                .checked_mul(weight_i128)
                 .ok_or(Error::InvalidPrice)?;
-                
-            total_weighted_price = total_weighted_price.checked_add(weighted_val)
+
+            total_weighted_price = total_weighted_price
+                .checked_add(weighted_val)
                 .ok_or(Error::InvalidPrice)?;
-                
-            total_weight = total_weight.checked_add(component.weight)
-                .unwrap_or(total_weight); 
+
+            total_weight = total_weight
+                .checked_add(component.weight)
+                .unwrap_or(total_weight);
         }
 
         if total_weight == 0 {
             return Err(Error::InvalidWeight);
         }
 
-        // Calculate final index price. 
+        // Calculate final index price.
         // Because all stored prices are 9-decimal normalized, the division preserves the 9-decimal standard.
         let index_price = total_weighted_price / (total_weight as i128);
         Ok(index_price)
@@ -729,7 +772,12 @@ impl PriceOracle {
         _track_asset(&env, asset.clone());
 
         let key = DataKey::VerifiedPrice(asset.clone());
-        if env.storage().persistent().get::<DataKey, PriceData>(&key).is_none() {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, PriceData>(&key)
+            .is_none()
+        {
             env.storage().persistent().set(
                 &key,
                 &PriceData {
@@ -744,7 +792,9 @@ impl PriceOracle {
         }
 
         //_log_admin_action(&env, &admin, AdminAction::AddAsset, Some(asset.to_string()));
-        env.events().publish_event(&AssetAddedEvent { symbol: asset.clone() });
+        env.events().publish_event(&AssetAddedEvent {
+            symbol: asset.clone(),
+        });
         log_event(&env, Symbol::new(&env, "asset_added"), asset, 0);
 
         Ok(())
@@ -771,7 +821,10 @@ impl PriceOracle {
 
         env.storage().persistent().set(
             &DataKey::AssetMeta(asset),
-            &AssetMeta { base_decimals, quote_decimals },
+            &AssetMeta {
+                base_decimals,
+                quote_decimals,
+            },
         );
     }
 
@@ -780,50 +833,44 @@ impl PriceOracle {
     /// Returns the `AssetMeta` containing `base_decimals` and `quote_decimals`
     /// registered via `set_asset_decimals`.
     pub fn get_asset_meta(env: Env, asset: Symbol) -> Option<AssetMeta> {
+        env.storage().persistent().get(&DataKey::AssetMeta(asset))
+    }
+    /// Set lightweight metadata for an asset.
+    ///
+    /// `name` must be a short Symbol. Longer descriptions should be stored
+    /// separately with `set_asset_description`.
+    pub fn set_asset_info(
+        env: Env,
+        admin: Address,
+        asset: Symbol,
+        name: Symbol,
+        base_decimals: u32,
+        quote_decimals: u32,
+    ) {
+        _require_not_destroyed(&env);
+        crate::auth::_require_not_frozen(&env);
+        admin.require_auth();
+        crate::auth::_require_authorized(&env, &admin);
+
+        let info = AssetInfo {
+            name,
+            base_decimals,
+            quote_decimals,
+        };
+
         env.storage()
             .persistent()
-            .get(&DataKey::AssetMeta(asset))
+            .set(&DataKey::AssetInfo(asset), &info);
     }
-/// Set lightweight metadata for an asset.
-///
-/// `name` must be a short Symbol. Longer descriptions should be stored
-/// separately with `set_asset_description`.
-pub fn set_asset_info(
-    env: Env,
-    admin: Address,
-    asset: Symbol,
-    name: Symbol,
-    base_decimals: u32,
-    quote_decimals: u32,
-) {
-    _require_not_destroyed(&env);
-    crate::auth::_require_not_frozen(&env);
-    admin.require_auth();
-    crate::auth::_require_authorized(&env, &admin);
 
-    let info = AssetInfo {
-        name,
-        base_decimals,
-        quote_decimals,
-    };
-
-    env.storage()
-        .persistent()
-        .set(&DataKey::AssetInfo(asset), &info);
-}
-
-/// Get lightweight metadata for an asset.
-pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::AssetInfo(asset))
-}
+    /// Get lightweight metadata for an asset.
+    pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
+        env.storage().persistent().get(&DataKey::AssetInfo(asset))
+    }
 
     /// Return the current admin addresses.
     pub fn get_admin(env: Env) -> Address {
-        crate::auth::_get_admin(&env)
-            .get(0)
-            .expect("No admin set")
+        crate::auth::_get_admin(&env).get(0).expect("No admin set")
     }
 
     /// Returns true if the supplied address is one of the admin addresses.
@@ -840,7 +887,9 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         //_log_admin_action(&env, &current_admin, AdminAction::TransferAdminInitiated, Some(new_admin.to_string()));
         let now = env.ledger().timestamp();
 
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
         env.storage()
             .instance()
             .set(&DataKey::PendingAdminTimestamp, &now);
@@ -1049,7 +1098,12 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     /// Store a human-readable description for an asset (e.g. "Nigerian Naira").
     ///
     /// Only the admin can call this.
-    pub fn set_asset_description(env: Env, admin: Address, asset: Symbol, description: soroban_sdk::String) {
+    pub fn set_asset_description(
+        env: Env,
+        admin: Address,
+        asset: Symbol,
+        description: soroban_sdk::String,
+    ) {
         _require_not_destroyed(&env);
         admin.require_auth();
         crate::auth::_require_authorized(&env, &admin);
@@ -1085,12 +1139,12 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     pub fn set_price(env: Env, asset: Symbol, val: i128, decimals: u32, ttl: u64) {
         _require_not_destroyed(&env);
         crate::auth::_require_not_frozen(&env);
-        
+
         // Acquire reentrancy lock
         if let Err(err) = acquire_lock(&env) {
             panic_with_error!(&env, err);
         }
-        
+
         // Ensure lock is released even on error
         let result = (|| -> Result<(), Error> {
             if !is_valid(val) {
@@ -1127,7 +1181,10 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
                     current.timestamp = now;
                     storage.set(&key, &current);
                     update_twap(&env, asset.clone(), val, now);
-                    env.events().publish_event(&PriceUpdatedEvent { asset: asset.clone(), price: val });
+                    env.events().publish_event(&PriceUpdatedEvent {
+                        asset: asset.clone(),
+                        price: val,
+                    });
                     log_event(&env, Symbol::new(&env, "price_updated"), asset, val);
                     return Ok(());
                 }
@@ -1147,10 +1204,22 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
             update_twap(&env, asset.clone(), normalized, now);
 
             if is_new_asset {
-                env.events().publish_event(&AssetAddedEvent { symbol: asset.clone() });
-                log_event(&env, Symbol::new(&env, "asset_added"), asset.clone(), normalized);
+                env.events().publish_event(&AssetAddedEvent {
+                    symbol: asset.clone(),
+                });
+                log_event(
+                    &env,
+                    Symbol::new(&env, "asset_added"),
+                    asset.clone(),
+                    normalized,
+                );
             } else {
-                log_event(&env, Symbol::new(&env, "price_updated"), asset.clone(), normalized);
+                log_event(
+                    &env,
+                    Symbol::new(&env, "price_updated"),
+                    asset.clone(),
+                    normalized,
+                );
                 env.events().publish_event(&PriceUpdatedEvent {
                     asset: asset.clone(),
                     price: normalized,
@@ -1167,13 +1236,13 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
                 confidence_score: 100,
             };
             callbacks::notify_subscribers(&env, &payload);
-            
+
             Ok(())
         })();
-        
+
         // Always release lock
         release_lock(&env);
-        
+
         // Propagate error if any
         if let Err(err) = result {
             panic_with_error!(&env, err);
@@ -1230,7 +1299,12 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
             .persistent()
             .set(&DataKey::CommunityPrice(asset.clone()), &price_data);
 
-        log_event(&env, Symbol::new(&env, "community_price"), asset, normalized);
+        log_event(
+            &env,
+            Symbol::new(&env, "community_price"),
+            asset,
+            normalized,
+        );
 
         Ok(())
     }
@@ -1285,7 +1359,10 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         let storage = env.storage().persistent();
 
         // Asset must exist in at least the verified bucket
-        if storage.get::<DataKey, PriceData>(&DataKey::VerifiedPrice(asset.clone())).is_none() {
+        if storage
+            .get::<DataKey, PriceData>(&DataKey::VerifiedPrice(asset.clone()))
+            .is_none()
+        {
             return Err(Error::AssetNotFound);
         }
 
@@ -1347,7 +1424,11 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         crate::auth::_require_not_frozen(&env);
         source.require_auth();
 
-        if !env.storage().persistent().has(&DataKey::TrackedAsset(asset.clone())) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::TrackedAsset(asset.clone()))
+        {
             return Err(Error::AssetNotFound);
         }
 
@@ -1372,7 +1453,7 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
 
         // Get the current buffer for this asset
         let mut buffer = get_price_buffer(&env, asset.clone());
-        
+
         // Clear buffer if it's from a previous ledger
         clear_stale_buffer(&env, asset.clone(), &mut buffer);
 
@@ -1391,7 +1472,8 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
 
         let max_deviation_bps = Self::get_max_deviation_percentage(env.clone());
         if old_price > 0 && !bypass_active {
-            if let Some(pct_change_bps) = calculate_percentage_difference_bps(old_price, normalized) {
+            if let Some(pct_change_bps) = calculate_percentage_difference_bps(old_price, normalized)
+            {
                 if pct_change_bps > max_deviation_bps {
                     return Err(Error::FlashCrashDetected);
                 }
@@ -1452,6 +1534,11 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
             "invariant violated: median_price must be > 0"
         );
 
+        // Also update the legacy PriceData for backward compatibility
+        let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
+            .get(&DataKey::PriceData)
+            .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+
         let price_data = PriceData {
             price: median_price,
             timestamp: env.ledger().timestamp(),
@@ -1465,8 +1552,16 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         storage.set(&key, &price_data);
         update_twap(&env, asset.clone(), median_price, env.ledger().timestamp());
 
-        env.events().publish_event(&PriceUpdatedEvent { asset: asset.clone(), price: normalized });
-        log_event(&env, Symbol::new(&env, "price_updated"), asset.clone(), normalized);
+        env.events().publish_event(&PriceUpdatedEvent {
+            asset: asset.clone(),
+            price: normalized,
+        });
+        log_event(
+            &env,
+            Symbol::new(&env, "price_updated"),
+            asset.clone(),
+            normalized,
+        );
 
         // Notify all subscribed contracts of the price update
         let payload = PriceUpdatePayload {
@@ -1544,18 +1639,17 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
 
     /// Set the maximum allowed price deviation percentage (in basis points).
     /// This value is applied in `update_price` to reject single-ledger flash crash updates.
-    pub fn set_max_deviation_percentage(
-        env: Env,
-        admin: Address,
-        max_deviation_bps: i128,
-    ) {
+    pub fn set_max_deviation_percentage(env: Env, admin: Address, max_deviation_bps: i128) {
         _require_not_destroyed(&env);
         crate::auth::_require_not_frozen(&env);
         admin.require_auth();
         crate::auth::_require_authorized(&env, &admin);
 
         assert!(max_deviation_bps > 0, "max_deviation_bps must be positive");
-        assert!(max_deviation_bps <= 10_000, "max_deviation_bps must be <= 10000");
+        assert!(
+            max_deviation_bps <= 10_000,
+            "max_deviation_bps must be <= 10000"
+        );
 
         env.storage()
             .persistent()
@@ -1628,7 +1722,9 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         admin2.require_auth();
 
         // Verify both are authorized admins
-        if !crate::auth::_is_authorized(&env, &admin1) || !crate::auth::_is_authorized(&env, &admin2) {
+        if !crate::auth::_is_authorized(&env, &admin1)
+            || !crate::auth::_is_authorized(&env, &admin2)
+        {
             return Err(Error::NotAuthorized);
         }
 
@@ -1665,7 +1761,12 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     ///
     /// # Returns
     /// Ok(()) if successful, Error if validation fails
-    pub fn register_admin(env: Env, admin1: Address, admin2: Address, new_admin: Address) -> Result<(), Error> {
+    pub fn register_admin(
+        env: Env,
+        admin1: Address,
+        admin2: Address,
+        new_admin: Address,
+    ) -> Result<(), Error> {
         crate::auth::_require_not_frozen(&env);
         // Verify both are distinct addresses before requiring auth
         if admin1 == admin2 {
@@ -1677,7 +1778,9 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         admin2.require_auth();
 
         // Verify both are authorized admins
-        if !crate::auth::_is_authorized(&env, &admin1) || !crate::auth::_is_authorized(&env, &admin2) {
+        if !crate::auth::_is_authorized(&env, &admin1)
+            || !crate::auth::_is_authorized(&env, &admin2)
+        {
             return Err(Error::NotAuthorized);
         }
 
@@ -1712,7 +1815,12 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     ///
     /// # Returns
     /// Ok(()) if successful, Error if validation fails
-    pub fn remove_admin(env: Env, admin1: Address, admin2: Address, admin_to_remove: Address) -> Result<(), Error> {
+    pub fn remove_admin(
+        env: Env,
+        admin1: Address,
+        admin2: Address,
+        admin_to_remove: Address,
+    ) -> Result<(), Error> {
         crate::auth::_require_not_frozen(&env);
         // Verify both are distinct addresses before requiring auth
         if admin1 == admin2 {
@@ -1724,7 +1832,9 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         admin2.require_auth();
 
         // Verify both are authorized admins
-        if !crate::auth::_is_authorized(&env, &admin1) || !crate::auth::_is_authorized(&env, &admin2) {
+        if !crate::auth::_is_authorized(&env, &admin1)
+            || !crate::auth::_is_authorized(&env, &admin2)
+        {
             return Err(Error::NotAuthorized);
         }
 
@@ -1785,8 +1895,12 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         env.storage().instance().remove(&DataKey::Admin);
         env.storage().instance().remove(&DataKey::BaseCurrencyPairs);
         env.storage().instance().remove(&DataKey::PendingAdmin);
-        env.storage().instance().remove(&DataKey::PendingAdminTimestamp);
-        env.storage().instance().remove(&DataKey::AdminUpdateTimestamp);
+        env.storage()
+            .instance()
+            .remove(&DataKey::PendingAdminTimestamp);
+        env.storage()
+            .instance()
+            .remove(&DataKey::AdminUpdateTimestamp);
         env.storage().instance().remove(&DataKey::RecentEvents);
         env.storage().instance().remove(&DataKey::Initialized);
         crate::auth::_remove_paused(&env);
@@ -1868,8 +1982,8 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         // Store the proposal
         crate::auth::_set_proposed_action(&env, action_id, &proposed);
 
-        // Add the proposer's vote automatically
-        crate::auth::_add_action_vote(&env, action_id, &admin);
+        // Add any vote weight that is effective for the proposer.
+        crate::auth::_add_effective_action_votes(&env, action_id, &admin);
 
         // Log the action
         let details = format!(
@@ -1905,7 +2019,13 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         _require_not_destroyed(&env);
         crate::auth::_require_not_frozen(&env);
         voter.require_auth();
-        crate::auth::_require_authorized(&env, &voter);
+
+        let voter_is_admin = crate::auth::_is_authorized(&env, &voter);
+        let voter_delegated_away = crate::auth::_get_vote_delegate(&env, &voter).is_some();
+        let delegated_voters = crate::auth::_get_delegated_voters(&env, &voter);
+        if (!voter_is_admin || voter_delegated_away) && delegated_voters.len() == 0 {
+            return Err(Error::NotAuthorized);
+        }
 
         // Get the proposed action
         let proposed = match crate::auth::_get_proposed_action(&env, action_id) {
@@ -1921,12 +2041,7 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
             return Err(Error::ActionCancelled);
         }
 
-        // Add the vote
-        crate::auth::_add_action_vote(&env, action_id, &voter);
-
-        // Get updated vote count
-        let voters = crate::auth::_get_action_votes(&env, action_id);
-        let vote_count = voters.len();
+        let vote_count = crate::auth::_add_effective_action_votes(&env, action_id, &voter);
 
         // Log the vote
         _log_admin_action(
@@ -1945,6 +2060,43 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         Ok(vote_count)
     }
 
+    /// Delegate the owner's vote weight to a proxy representative.
+    ///
+    /// The owner can reassign the delegate by calling this again, or break the
+    /// link immediately with `clear_vote_delegate`.
+    pub fn delegate_vote(env: Env, owner: Address, delegate: Address) -> Result<(), Error> {
+        _require_not_destroyed(&env);
+        crate::auth::_require_not_frozen(&env);
+        owner.require_auth();
+
+        if owner == delegate {
+            return Err(Error::InvalidDelegate);
+        }
+
+        crate::auth::_set_vote_delegate(&env, &owner, &delegate);
+        env.events()
+            .publish((Symbol::new(&env, "vote_delegated"),), (owner, delegate));
+
+        Ok(())
+    }
+
+    /// Remove the owner's active vote delegation.
+    pub fn clear_vote_delegate(env: Env, owner: Address) -> Result<(), Error> {
+        _require_not_destroyed(&env);
+        owner.require_auth();
+
+        crate::auth::_remove_vote_delegate(&env, &owner);
+        env.events()
+            .publish((Symbol::new(&env, "vote_delegate_cleared"),), (owner,));
+
+        Ok(())
+    }
+
+    /// Get the proxy representative currently assigned by an owner.
+    pub fn get_vote_delegate(env: Env, owner: Address) -> Option<Address> {
+        crate::auth::_get_vote_delegate(&env, &owner)
+    }
+
     /// Execute a proposed action that has reached the vote threshold.
     ///
     /// This function executes high-impact actions like toggle_pause, register_admin,
@@ -1956,7 +2108,11 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     ///
     /// # Returns
     /// Ok(()) if successful
-    pub fn execute_proposed_action(env: Env, executor: Address, action_id: u64) -> Result<(), Error> {
+    pub fn execute_proposed_action(
+        env: Env,
+        executor: Address,
+        action_id: u64,
+    ) -> Result<(), Error> {
         _require_not_destroyed(&env);
         crate::auth::_require_not_frozen(&env);
         executor.require_auth();
@@ -2046,13 +2202,17 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
                 if admins.len() < 2 {
                     return Err(Error::MultiSigValidationFailed);
                 }
-                
+
                 // Wipe all known instance storage
                 env.storage().instance().remove(&DataKey::Admin);
                 env.storage().instance().remove(&DataKey::BaseCurrencyPairs);
                 env.storage().instance().remove(&DataKey::PendingAdmin);
-                env.storage().instance().remove(&DataKey::PendingAdminTimestamp);
-                env.storage().instance().remove(&DataKey::AdminUpdateTimestamp);
+                env.storage()
+                    .instance()
+                    .remove(&DataKey::PendingAdminTimestamp);
+                env.storage()
+                    .instance()
+                    .remove(&DataKey::AdminUpdateTimestamp);
                 env.storage().instance().remove(&DataKey::RecentEvents);
                 env.storage().instance().remove(&DataKey::Initialized);
                 crate::auth::_remove_paused(&env);
@@ -2066,7 +2226,7 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
                 // Set the destroyed flag
                 env.storage().instance().set(&DataKey::Destroyed, &true);
                 proposed.executed = true;
-                
+
                 _log_admin_action(&env, &executor, AdminAction::SelfDestruct, None);
                 env.events().publish(
                     (Symbol::new(&env, "contract_destroyed"),),
@@ -2136,7 +2296,11 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     /// # Arguments
     /// * `canceller` - The admin cancelling the action (must provide auth)
     /// * `action_id` - The ID of the action to cancel
-    pub fn cancel_proposed_action(env: Env, canceller: Address, action_id: u64) -> Result<(), Error> {
+    pub fn cancel_proposed_action(
+        env: Env,
+        canceller: Address,
+        action_id: u64,
+    ) -> Result<(), Error> {
         _require_not_destroyed(&env);
         crate::auth::_require_not_frozen(&env);
         canceller.require_auth();
@@ -2186,7 +2350,12 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         crate::auth::_require_not_frozen(&env);
         admin.require_auth();
         crate::auth::_require_authorized(&env, &admin);
-        _log_admin_action(&env, &admin, AdminAction::SetCouncil, Some(council.to_string()));
+        _log_admin_action(
+            &env,
+            &admin,
+            AdminAction::SetCouncil,
+            Some(council.to_string()),
+        );
         crate::auth::_set_council(&env, &council);
 
         env.events().publish(
@@ -2227,10 +2396,8 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         crate::auth::_set_frozen(&env, true);
 
         // Emit event
-        env.events().publish(
-            (Symbol::new(&env, "emergency_freeze"),),
-            (council.clone(),),
-        );
+        env.events()
+            .publish((Symbol::new(&env, "emergency_freeze"),), (council.clone(),));
 
         Ok(())
     }
@@ -2243,7 +2410,7 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     }
 
     /// Get the price buffer for a specific asset.
-    /// 
+    ///
     /// Returns all relayer submissions for the current ledger,
     /// allowing consumers to see the individual inputs before median calculation.
     pub fn get_price_buffer_data(env: Env, asset: Symbol) -> Option<PriceBuffer> {
@@ -2254,8 +2421,8 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
         Some(buffer)
     }
     pub fn normalize_price(_env: &Env, _asset: &Symbol, price: i128) -> i128 {
-    price // Returns the integer directly
-    } 
+        price // Returns the integer directly
+    }
     /// Get the number of unique relayer submissions for an asset in the current ledger.
     pub fn get_relayer_count(env: Env, asset: Symbol) -> u32 {
         let buffer = get_price_buffer(&env, asset);
@@ -2265,10 +2432,7 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     /// Get the Time-Weighted Average Price (TWAP) for a specific asset.
     pub fn get_twap(env: Env, asset: Symbol) -> Option<i128> {
         let key = DataKey::Twap(asset);
-        let twap_buffer: soroban_sdk::Vec<(u64, i128)> = env
-            .storage()
-            .persistent()
-            .get(&key)?;
+        let twap_buffer: soroban_sdk::Vec<(u64, i128)> = env.storage().persistent().get(&key)?;
 
         let len = twap_buffer.len();
         if len == 0 {
@@ -2305,7 +2469,10 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
     ///
     /// # Returns
     /// Returns an error if the contract is not found in the subscriber list.
-    pub fn unsubscribe_from_price_updates(env: Env, callback_contract: Address) -> Result<(), Error> {
+    pub fn unsubscribe_from_price_updates(
+        env: Env,
+        callback_contract: Address,
+    ) -> Result<(), Error> {
         callbacks::unsubscribe(&env, &callback_contract)
     }
 
@@ -2339,10 +2506,8 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
             Some(format!("expiry: {}", expiry)),
         );
 
-        env.events().publish_event(&BypassEnabledEvent {
-            admin,
-            expiry,
-        });
+        env.events()
+            .publish_event(&BypassEnabledEvent { admin, expiry });
 
         Ok(expiry)
     }
@@ -2355,12 +2520,7 @@ pub fn get_asset_info(env: Env, asset: Symbol) -> Option<AssetInfo> {
 
         crate::auth::_remove_bypass_safety_checks(&env);
 
-        _log_admin_action(
-            &env,
-            &admin,
-            AdminAction::DisableBypassSafetyChecks,
-            None,
-        );
+        _log_admin_action(&env, &admin, AdminAction::DisableBypassSafetyChecks, None);
 
         env.events().publish_event(&BypassDisabledEvent { admin });
 
