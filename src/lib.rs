@@ -1,5 +1,6 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, BytesN, Map, Symbol};
+#![no_std]
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, BytesN, Map, Symbol, Vec};
 
 // Contract state keys
 const DATA_KEY: Symbol = Symbol::short("DATA");
@@ -13,6 +14,28 @@ const HEARTBEAT_KEY: Symbol = Symbol::short("HBEAT");
 const HB_INTERVAL_KEY: Symbol = Symbol::short("HBINTV");
 /// Default heartbeat interval: 5 minutes
 const DEFAULT_HEARTBEAT_INTERVAL: u64 = 5 * 60;
+
+// ── Emergency Key Revocation (Task #revocation) ──────────────────────────────
+/// Registered signers list: Vec<Address>
+const SIGNERS_KEY: Symbol = Symbol::short("SIGNERS");
+/// Active revocation proposal
+const REVOCATION_KEY: Symbol = Symbol::short("REVOKE");
+
+/// An active revocation proposal.
+#[contracttype]
+#[derive(Clone)]
+pub struct RevocationProposal {
+    /// The compromised admin key to be stripped.
+    pub target: Address,
+    /// Replacement admin address (takes over after revocation).
+    pub replacement: Address,
+    /// Signer who opened the proposal.
+    pub proposer: Address,
+    /// Ledger timestamp when the proposal was created.
+    pub proposed_at: u64,
+    /// Addresses that have already voted in favour.
+    pub votes: Vec<Address>,
+}
 
 #[contracttype]
 pub struct PendingUpgrade {
@@ -259,6 +282,181 @@ impl TimeLockedUpgradeContract {
         Self::_get_interval(&env)
     }
 
+    // ── Signer Management ────────────────────────────────────────────────────
+
+    /// Register a new signer. Admin-only.
+    ///
+    /// Signers are the addresses eligible to participate in emergency
+    /// revocation votes. The admin itself always counts as a signer but
+    /// does not need to be explicitly registered.
+    pub fn register_signer(env: Env, signer: Address, caller: Address) {
+        let data = Self::get_data(env.clone());
+        if data.admin != caller {
+            panic!("only admin can register signers");
+        }
+        caller.require_auth();
+
+        let mut signers = Self::_get_signers(&env);
+        if !signers.iter().any(|s| s == signer) {
+            signers.push_back(signer);
+            env.storage().instance().set(&SIGNERS_KEY, &signers);
+        }
+    }
+
+    /// Remove a registered signer. Admin-only.
+    pub fn remove_signer(env: Env, signer: Address, caller: Address) {
+        let data = Self::get_data(env.clone());
+        if data.admin != caller {
+            panic!("only admin can remove signers");
+        }
+        caller.require_auth();
+
+        let signers = Self::_get_signers(&env);
+        let mut filtered: Vec<Address> = Vec::new(&env);
+        for s in signers.iter() {
+            if s != signer {
+                filtered.push_back(s);
+            }
+        }
+        env.storage().instance().set(&SIGNERS_KEY, &filtered);
+    }
+
+    /// Return the list of registered signers (does not include the admin implicitly).
+    pub fn get_signers(env: Env) -> Vec<Address> {
+        Self::_get_signers(&env)
+    }
+
+    // ── Emergency Revocation Vote Flow ───────────────────────────────────────
+
+    /// Propose revoking the current admin key.
+    ///
+    /// Any registered signer (or the admin itself) may open a proposal.
+    /// `target` must be the current admin. `replacement` will become the
+    /// new admin once the vote passes.
+    pub fn propose_revocation(
+        env: Env,
+        target: Address,
+        replacement: Address,
+        proposer: Address,
+    ) {
+        proposer.require_auth();
+        let data = Self::get_data(env.clone());
+
+        if !Self::_is_signer(&env, &proposer) && data.admin != proposer {
+            panic!("only a registered signer can propose revocation");
+        }
+        if data.admin != target {
+            panic!("target is not the current admin");
+        }
+        if env.storage().instance().has(&REVOCATION_KEY) {
+            panic!("a revocation proposal is already active");
+        }
+
+        let mut votes: Vec<Address> = Vec::new(&env);
+        votes.push_back(proposer.clone());
+
+        let proposal = RevocationProposal {
+            target,
+            replacement,
+            proposer,
+            proposed_at: env.ledger().timestamp(),
+            votes,
+        };
+        env.storage().instance().set(&REVOCATION_KEY, &proposal);
+    }
+
+    /// Cast a vote in favour of the active revocation proposal.
+    ///
+    /// When the vote count reaches the majority threshold the admin key is
+    /// immediately replaced with `replacement`.
+    pub fn vote_revocation(env: Env, voter: Address) {
+        voter.require_auth();
+        let data = Self::get_data(env.clone());
+
+        if !Self::_is_signer(&env, &voter) && data.admin != voter {
+            panic!("only a registered signer can vote");
+        }
+
+        let mut proposal: RevocationProposal = env
+            .storage()
+            .instance()
+            .get(&REVOCATION_KEY)
+            .unwrap_or_else(|| panic!("no active revocation proposal"));
+
+        if proposal.votes.iter().any(|v| v == voter) {
+            panic!("signer has already voted");
+        }
+
+        proposal.votes.push_back(voter);
+
+        let threshold = Self::_revocation_threshold(&env);
+        if proposal.votes.len() >= threshold {
+            let mut contract_data = data;
+            contract_data.admin = proposal.replacement.clone();
+            env.storage().instance().set(&DATA_KEY, &contract_data);
+            env.storage().instance().remove(&REVOCATION_KEY);
+        } else {
+            env.storage().instance().set(&REVOCATION_KEY, &proposal);
+        }
+    }
+
+    /// Execute a revocation proposal that has already reached threshold.
+    ///
+    /// `vote_revocation` auto-executes on the final vote; this function
+    /// exists as an explicit on-chain confirmation path.
+    pub fn execute_revocation(env: Env, caller: Address) {
+        caller.require_auth();
+        let data = Self::get_data(env.clone());
+
+        if !Self::_is_signer(&env, &caller) && data.admin != caller {
+            panic!("only a registered signer can execute revocation");
+        }
+
+        let proposal: RevocationProposal = env
+            .storage()
+            .instance()
+            .get(&REVOCATION_KEY)
+            .unwrap_or_else(|| panic!("no active revocation proposal"));
+
+        let threshold = Self::_revocation_threshold(&env);
+        if proposal.votes.len() < threshold {
+            panic!("revocation threshold not yet reached");
+        }
+
+        let mut contract_data = data;
+        contract_data.admin = proposal.replacement.clone();
+        env.storage().instance().set(&DATA_KEY, &contract_data);
+        env.storage().instance().remove(&REVOCATION_KEY);
+    }
+
+    /// Cancel the active revocation proposal.
+    ///
+    /// Only the proposer or the current admin (when they are not the target)
+    /// may cancel.
+    pub fn cancel_revocation(env: Env, caller: Address) {
+        caller.require_auth();
+        let data = Self::get_data(env.clone());
+
+        let proposal: RevocationProposal = env
+            .storage()
+            .instance()
+            .get(&REVOCATION_KEY)
+            .unwrap_or_else(|| panic!("no active revocation proposal"));
+
+        let is_proposer = proposal.proposer == caller;
+        let is_admin_not_target = data.admin == caller && data.admin != proposal.target;
+        if !is_proposer && !is_admin_not_target {
+            panic!("only the proposer or a non-targeted admin can cancel");
+        }
+
+        env.storage().instance().remove(&REVOCATION_KEY);
+    }
+
+    /// Return the active revocation proposal, if any.
+    pub fn get_revocation_proposal(env: Env) -> Option<RevocationProposal> {
+        env.storage().instance().get(&REVOCATION_KEY)
+    }
+
     // ── Private helpers ──────────────────────────────────────────────────────
 
     /// Internal: record the current ledger timestamp for an asset.
@@ -279,6 +477,28 @@ impl TimeLockedUpgradeContract {
             .instance()
             .get(&HB_INTERVAL_KEY)
             .unwrap_or(DEFAULT_HEARTBEAT_INTERVAL)
+    }
+
+    /// Internal: return the registered signers list.
+    fn _get_signers(env: &Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&SIGNERS_KEY)
+            .unwrap_or_else(|| Vec::new(env))
+    }
+
+    /// Internal: check whether `addr` is a registered signer.
+    fn _is_signer(env: &Env, addr: &Address) -> bool {
+        Self::_get_signers(env).iter().any(|s| s == *addr)
+    }
+
+    /// Internal: majority threshold over registered signers.
+    ///
+    /// Counts registered signers only (admin is not auto-included).
+    /// Threshold = floor(n/2) + 1  (strict majority).
+    fn _revocation_threshold(env: &Env) -> u32 {
+        let n = Self::_get_signers(env).len();
+        n / 2 + 1
     }
 }
 
