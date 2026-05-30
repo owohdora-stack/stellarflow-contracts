@@ -3099,6 +3099,7 @@ mod auth;
 mod callbacks;
 pub mod math;
 mod median;
+mod role_registry;
 mod slashing;
 mod test;
 mod types;
