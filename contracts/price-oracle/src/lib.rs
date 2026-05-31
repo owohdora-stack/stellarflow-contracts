@@ -419,8 +419,16 @@ pub enum Error {
     NotInitialized = 24,
     /// Contract is emergency halted — all rate read queries are blocked.
     EmergencyHalted = 25,
+    /// Slash amount string is missing, malformed, or is not a positive integer.
+    InvalidSlashAmount = 26,
+    /// No SEP-41 token has been configured for slashing operations.
+    SlashTokenNotSet = 27,
+    /// No insurance reserve address has been configured.
+    InsuranceReserveNotSet = 28,
+    /// A slash amount exceeded the relayer's available stake.
+    InsufficientStake = 29,
     /// Missed-block infraction counts must be positive and in range.
-    InvalidInfractionCount = 26,
+    InvalidInfractionCount = 30,
 }
 
 #[contract]

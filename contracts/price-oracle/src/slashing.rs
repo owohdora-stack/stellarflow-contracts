@@ -270,19 +270,19 @@ pub fn execute_slash_internal(
 
     // ── Check stake balance ──────────────────────────────────────────────────
     let current_stake = get_stake(env, bad_relayer);
-    if amount > current_stake {
+    if slashed_amount > current_stake {
         return Err(Error::InsufficientStake);
     }
 
     // ── Deduct stake ─────────────────────────────────────────────────────────
-    let remaining_stake = current_stake - amount;
+    let remaining_stake = current_stake - slashed_amount;
     set_stake(env, bad_relayer, remaining_stake);
 
     // ── Transfer slashed tokens to the insurance reserve ─────────────────────
     // The contract holds the staked tokens in its own custody, so we transfer
     // from `current_contract_address()` to the reserve.
     let token_client = token::Client::new(env, &token_address);
-    token_client.transfer(&env.current_contract_address(), &reserve, &amount);
+    token_client.transfer(&env.current_contract_address(), &reserve, &slashed_amount);
 
     // ── Auto-delist relayer if fully slashed ─────────────────────────────────
     // A relayer with zero stake can no longer be trusted to submit prices.
@@ -295,7 +295,7 @@ pub fn execute_slash_internal(
     // ── Emit event ───────────────────────────────────────────────────────────
     env.events().publish_event(&SlashExecutedEvent {
         bad_relayer: bad_relayer.clone(),
-        amount,
+        amount: slashed_amount,
         reserve: reserve.clone(),
         executor: executor.clone(),
     });
@@ -306,7 +306,7 @@ pub fn execute_slash_internal(
         (Symbol::new(env, "slash_executed"),),
         (
             bad_relayer.clone(),
-            amount,
+            slashed_amount,
             reserve,
             executor.clone(),
             remaining_stake,
