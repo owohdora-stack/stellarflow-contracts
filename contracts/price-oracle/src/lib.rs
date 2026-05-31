@@ -1823,6 +1823,22 @@ impl PriceOracle {
         };
         callbacks::notify_subscribers(&env, &payload);
 
+        // ── Gas Tank reimbursement (Issue #266) ──────────────────────────────
+        // After every successful price submission, reimburse the relayer for
+        // their on-chain transaction costs via the Gas Tank escrow contract.
+        // This call is a no-op when no Gas Tank has been configured.
+        if let Some(gas_tank_addr) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::GasTank)
+        {
+            // Call reimburse(relayer) on the Gas Tank contract.
+            // We use env.invoke_contract so we stay no_std compatible.
+            let reimburse_fn = Symbol::new(&env, "reimburse");
+            let args = soroban_sdk::vec![&env, payload.provider.clone().to_val()];
+            let _: () = env.invoke_contract(&gas_tank_addr, &reimburse_fn, args);
+        }
+
         Ok(())
     }
 
@@ -3057,6 +3073,39 @@ impl PriceOracle {
     /// Get the configured insurance reserve address, if any.
     pub fn get_insurance_reserve(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::InsuranceReserve)
+    }
+
+    // ── Gas Tank Integration (Issue #266) ────────────────────────────────────
+
+    /// Register the Gas Tank escrow contract address.
+    ///
+    /// Once set, `update_price` will automatically call `reimburse(relayer)` on
+    /// the Gas Tank after every successful price submission so that relayer
+    /// on-chain transaction fees are covered by pre-funded consumer deposits.
+    ///
+    /// Only admin-authorised callers may update this setting.
+    pub fn set_gas_tank(env: Env, admin: Address, gas_tank: Address) -> Result<(), Error> {
+        _require_not_destroyed(&env);
+        _require_initialized(&env);
+        crate::auth::_require_not_frozen(&env);
+        admin.require_auth();
+        crate::auth::_require_authorized(&env, &admin);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::GasTank, &gas_tank);
+
+        env.events().publish(
+            (Symbol::new(&env, "gas_tank_set"),),
+            (admin, gas_tank),
+        );
+
+        Ok(())
+    }
+
+    /// Return the configured Gas Tank contract address, if any.
+    pub fn get_gas_tank(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::GasTank)
     }
 
     /// Deposit stake tokens into the contract on behalf of a relayer.

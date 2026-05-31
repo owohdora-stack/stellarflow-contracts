@@ -2765,6 +2765,9 @@ fn test_median_calculation_after_truncation() {
     // The low-weight provider (index 11) should have been excluded
     let buffer = client.get_price_buffer_data(&asset).unwrap();
     assert_eq!(buffer.entries.len(), 11, "Buffer should contain 11 entries");
+}
+
+#[test]
 fn test_disable_bypass_clears_expiry() {
     let (env, contract_id, client) = setup();
     let admin = Address::generate(&env);

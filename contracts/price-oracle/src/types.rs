@@ -82,8 +82,10 @@ pub enum DataKey {
     ProviderUptimeStreakStart(Address),
     /// The SEP-41 token contract address used for staking and slashing.
     SlashToken,
-    /// The address of the ecosystem insurance reserve that receives slashed funds.
+    /// The address of the insurance reserve that receives slashed funds.
     InsuranceReserve,
+    /// The address of the registered GasTank contract for relayer reimbursement (Issue #266).
+    GasTank,
 }
 
 /// Decimal metadata for an asset pair.
