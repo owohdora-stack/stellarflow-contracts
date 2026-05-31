@@ -2959,3 +2959,36 @@ fn test_get_price_at_exact_boundary_does_not_panic() {
     let result = client.try_get_price(&asset, &true);
     assert!(result.is_ok(), "expected Ok at exact boundary");
 }
+
+#[test]
+fn test_relayer_activity_tracking() {
+    let (env, contract_id, client) = setup();
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+    let asset = symbol_short!("NGN");
+
+    client.initialize(&admin, &soroban_sdk::vec![&env, asset.clone()]);
+    add_provider(&env, &contract_id, &provider);
+
+    // Initial state
+    assert_eq!(client.get_provider_last_seen_ledger(&provider), 0);
+    assert!(!client.is_provider_active(&provider, &10));
+
+    // Update price at ledger 100
+    env.ledger().set_sequence(100);
+    client.update_price(&provider, &asset, &1000_i128, &6u32, &100u32, &3600u64);
+
+    // Check last seen ledger
+    assert_eq!(client.get_provider_last_seen_ledger(&provider), 100);
+
+    // Check activity within window of 10 ledgers
+    assert!(client.is_provider_active(&provider, &10)); // 100 <= 100 + 10
+
+    // Advance ledger to 110 (exactly at the end of the window)
+    env.ledger().set_sequence(110);
+    assert!(client.is_provider_active(&provider, &10)); // 110 <= 100 + 10
+
+    // Advance ledger to 111 (just outside the window)
+    env.ledger().set_sequence(111);
+    assert!(!client.is_provider_active(&provider, &10)); // 111 > 110
+}

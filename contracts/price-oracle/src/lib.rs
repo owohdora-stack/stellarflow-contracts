@@ -340,6 +340,13 @@ pub trait StellarFlowTrait {
         bad_relayer: Address,
         amount: i128,
     ) -> Result<(), Error>;
+
+    /// Get the exact ledger height of the provider's last successful price update.
+    fn get_provider_last_seen_ledger(env: Env, provider: Address) -> u32;
+
+    /// Return `true` if the provider has submitted a price update within the
+    /// last `window` ledgers.
+    fn is_provider_active(env: Env, provider: Address, window: u32) -> bool;
 }
 
 #[contractclient(name = "TokenContractClient")]
@@ -1798,6 +1805,9 @@ impl PriceOracle {
             ttl,
         };
 
+        // Record the provider's heartbeat (last seen ledger height) - tracking node liveness
+        storage.set(&DataKey::ProviderLastSeenLedger(source.clone()), &env.ledger().sequence());
+
         storage.set(&key, &price_data);
         update_twap(&env, asset.clone(), median_price, env.ledger().timestamp());
 
@@ -3249,6 +3259,22 @@ impl PriceOracle {
         crate::auth::_require_authorized(&env, &executor);
 
         crate::slashing::execute_slash_internal(&env, &executor, &bad_relayer, amount)
+    }
+
+    pub fn get_provider_last_seen_ledger(env: Env, provider: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ProviderLastSeenLedger(provider))
+            .unwrap_or(0)
+    }
+
+    pub fn is_provider_active(env: Env, provider: Address, window: u32) -> bool {
+        let last_seen = Self::get_provider_last_seen_ledger(env.clone(), provider);
+        if last_seen == 0 {
+            return false;
+        }
+        let current_ledger = env.ledger().sequence();
+        current_ledger <= last_seen.saturating_add(window)
     }
 }
 

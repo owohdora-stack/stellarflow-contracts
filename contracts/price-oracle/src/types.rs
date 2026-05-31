@@ -80,6 +80,8 @@ pub enum DataKey {
     /// Uptime streak start timestamp used to reset slashing multipliers after 48h
     /// of uninterrupted healthy operation.
     ProviderUptimeStreakStart(Address),
+    /// The exact ledger height of the provider's last successful price update.
+    ProviderLastSeenLedger(Address),
     /// The SEP-41 token contract address used for staking and slashing.
     SlashToken,
     /// The address of the ecosystem insurance reserve that receives slashed funds.
