@@ -576,7 +576,11 @@ pub enum ContractError {
     PriceMathOverflow = 47,
     /// Ledger gap too small - node must wait at least 3 blocks between submissions.
     LedgerGapTooSmall = 53,
+    /// Denominator is zero; division by zero prevented.
+    InvalidDenominator = 54,
 }
+
+pub type Error = ContractError;
 
 #[contract]
 pub struct PriceOracle;
