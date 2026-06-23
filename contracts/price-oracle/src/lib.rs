@@ -1586,15 +1586,14 @@ impl PriceOracle {
             .persistent()
             .set(&provider_reward_key, &new_provider_rewards);
 
-        let current_vault: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::FeeVaultBalance)
-            .unwrap_or(0);
+        // Keep fee-pool accounting isolated by the fee token address so
+        // corridor/asset fees never share the generic platform reserve slot.
+        let vault_key = DataKey::CorridorFeeVaultBalance(token_address);
+        let current_vault: i128 = env.storage().persistent().get(&vault_key).unwrap_or(0);
         let new_vault = current_vault
             .checked_add(fee)
             .ok_or(ContractError::PriceMathOverflow)?;
-        env.storage().persistent().set(&DataKey::FeeVaultBalance, &new_vault);
+        env.storage().persistent().set(&vault_key, &new_vault);
 
         Ok(())
     }
@@ -1647,9 +1646,15 @@ impl PriceOracle {
         env.storage().persistent().get(&DataKey::QueryFee).unwrap_or(0)
     }
 
-    /// Get the current accumulated fee vault balance.
+    /// Get the current accumulated fee vault balance for the configured fee token.
     pub fn get_fee_vault_balance(env: Env) -> i128 {
-        env.storage().persistent().get(&DataKey::FeeVaultBalance).unwrap_or(0)
+        let storage = env.storage().persistent();
+        match storage.get::<DataKey, Address>(&DataKey::FeeToken) {
+            Some(token_address) => storage
+                .get(&DataKey::CorridorFeeVaultBalance(token_address))
+                .unwrap_or(0),
+            None => 0,
+        }
     }
 
     /// Get the current pending rewards balance for a validator.
@@ -1681,19 +1686,14 @@ impl PriceOracle {
             .get(&DataKey::FeeToken)
             .ok_or(ContractError::FeeTokenNotSet)?;
 
-        let current_vault: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::FeeVaultBalance)
-            .unwrap_or(0);
+        let vault_key = DataKey::CorridorFeeVaultBalance(token_address.clone());
+        let current_vault: i128 = env.storage().persistent().get(&vault_key).unwrap_or(0);
         if current_vault < pending_rewards {
             return Err(ContractError::InsufficientVaultBalance);
         }
 
         let new_vault = current_vault - pending_rewards;
-        env.storage()
-            .persistent()
-            .set(&DataKey::FeeVaultBalance, &new_vault);
+        env.storage().persistent().set(&vault_key, &new_vault);
         env.storage().persistent().remove(&pending_rewards_key);
 
         let token_client = token::Client::new(&env, &token_address);
@@ -1772,18 +1772,9 @@ impl PriceOracle {
         let mut result = soroban_sdk::Vec::new(&env);
 
         for asset in assets.iter() {
-            // Boundary check (issue #278): skip assets that have not been configured.
-            // This prevents processing uninitialized currency pairs whose price
-            // slots contain stale or zero placeholder data.
-            if !env
-                .storage()
-                .persistent()
-                .has(&DataKey::TrackedAsset(asset.clone()))
-            {
-                result.push_back(None);
-                continue;
-            }
-
+            // Fetch the complete profile once and inspect all required
+            // sub-attributes in memory instead of performing separate
+            // existence/freshness/value passes for the same asset.
             let entry = env
                 .storage()
                 .persistent()
@@ -2283,6 +2274,13 @@ impl PriceOracle {
 
         // Save the updated buffer
         set_price_buffer(&env, asset.clone(), &buffer);
+
+        // Consensus has all inputs it needs in `buffer`; explicitly clear
+        // historical temporary storage slots so stale processing footprints do
+        // not linger in Soroban temporary storage after the consensus pass.
+        env.storage().temporary().remove(&DataKey::PriceBuffer);
+        env.storage().temporary().remove(&DataKey::PriceData);
+        env.storage().temporary().remove(&DataKey::PriceBoundsData);
 
         // Calculate the new median and store it as the canonical price
         let median_price = calculate_median_from_buffer(&env, &buffer).unwrap_or(normalized);
@@ -2994,14 +2992,13 @@ impl PriceOracle {
     /// The action ID that can be used to vote on this proposal
     /// Set the minimum number of votes required for a governance proposal to reach quorum (issue #292).
     /// Admin-only. Default is 1 (no floor) when unset.
+    /// Admin-only. Values below the hard floor are rejected, and the getter
+    /// clamps legacy low storage to the same minimum.
     pub fn set_min_quorum_threshold(
         env: Env,
         admin: Address,
         threshold: u32,
     ) -> Result<(), ContractError> {
-    /// Admin-only. Values below the hard floor are rejected, and the getter
-    /// clamps legacy low storage to the same minimum.
-    pub fn set_min_quorum_threshold(env: Env, admin: Address, threshold: u32) -> Result<(), ContractError> {
         _require_not_destroyed(&env);
         _require_initialized(&env);
         crate::auth::_require_not_frozen(&env);

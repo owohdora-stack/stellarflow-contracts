@@ -186,9 +186,6 @@ pub fn normalize_to_nine(value: i128, native_decimals: u32) -> Result<i128, Erro
     let normalized_in_interior_space = if native_decimals < TARGET {
         let diff = TARGET - native_decimals;
         let multiplier = 10_i128.checked_pow(diff).ok_or(Error::PriceMathOverflow)?;
-        value
-            .checked_mul(multiplier)
-            .ok_or(Error::PriceMathOverflow)
         scaled
             .checked_mul(multiplier)
             .ok_or(Error::PriceMathOverflow)?
