@@ -488,6 +488,10 @@ pub enum ContractError {
     UnbondingAlreadyReleased = 8,
     /// The current ledger plus the unbonding delay overflowed.
     LedgerSequenceOverflow = 9,
+    /// Slippage tolerance exceeded - computed rate deviates too far from expected rate.
+    SlippageToleranceExceeded = 10,
+    /// Invalid slippage tolerance - must be between 0 and 10000 basis points (0-100%).
+    InvalidSlippageTolerance = 11,
 }
 
 pub type Error = ContractError;
