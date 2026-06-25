@@ -738,5 +738,6 @@ mod asset_symbol;
 mod auth;
 pub mod math;
 mod median;
+mod slashing;
 mod test;
 mod types;
