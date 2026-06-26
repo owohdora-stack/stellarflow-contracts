@@ -50,9 +50,8 @@ use crate::nonce::{consume_nonce, get_nonce};
 
 pub mod consensus;
 pub mod staking_tiers;
-pub mod admin;
-pub mod validation;
-use crate::validation::check_bond_capacity;
+pub mod governance;
+use crate::governance::{verify_staged_delay, StagedUpgrade};
 
 pub use staking_tiers::{AssetFeedMetrics, StakingTier, StakingTierConfig};
 use staking_tiers::{
@@ -112,6 +111,7 @@ const NODE_PROFILES_KEY: Symbol = symbol_short!("NODES");
 const PLATFORM_CAPITAL_KEY: Symbol = symbol_short!("CAPITAL");
 const MAX_FEE_CEILING: u64 = 1_000_000_000;
 const CONSENSUS_CACHE_KEY: Symbol = symbol_short!("CACHE");
+const SEQUENCE_COUNTER_KEY: Symbol = symbol_short!("SEQ");
 const RELAYER_TTL_THRESHOLD: u32 = 5_000;
 
 #[contracttype]
@@ -126,14 +126,6 @@ pub struct RevocationProposal {
 
 #[contracttype]
 #[derive(Clone)]
-pub struct PendingUpgrade {
-    pub new_wasm_hash: BytesN<32>,
-    pub proposed_at: u64,
-    pub proposer: Address,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
 pub struct ContractData {
     pub admin: Address,
     pub value: u64,
@@ -285,9 +277,9 @@ impl TimeLockedUpgradeContract {
         let data = Self::get_data(&env)?;
         if data.admin != proposer { return Err(ContractError::NotAdmin); }
         proposer.require_auth();
-        consume_nonce(&env, &proposer, nonce, salt, salt_signature)?;
-        let pending = PendingUpgrade { new_wasm_hash, proposed_at: env.ledger().timestamp(), proposer };
-        env.storage().instance().set(&PENDING_UPGRADE_KEY, &pending);
+        consume_nonce(&env, &proposer, nonce, salt, salt_signature);
+        let staged = StagedUpgrade { wasm_hash: new_wasm_hash.into(), staged_at: env.ledger().sequence() };
+        env.storage().instance().set(&PENDING_UPGRADE_KEY, &staged);
         Ok(())
     }
 
@@ -297,23 +289,22 @@ impl TimeLockedUpgradeContract {
         if data.admin != executor { return Err(ContractError::NotAdmin); }
         executor.require_auth();
         consume_nonce(&env, &executor, nonce, salt, signature)?;
-        let pending: PendingUpgrade = env.storage().instance().get(&PENDING_UPGRADE_KEY).ok_or(ContractError::NoPendingUpgrade)?;
-        if env.ledger().timestamp().saturating_sub(pending.proposed_at) < UPGRADE_DELAY_SECONDS {
+        let pending: StagedUpgrade = env.storage().instance().get(&PENDING_UPGRADE_KEY).ok_or(ContractError::NoPendingUpgrade)?;
+        if !verify_staged_delay(pending.staged_at, env.ledger().sequence()) {
             return Err(ContractError::UpgradeTimelockNotSatisfied);
         }
-        env.deployer().update_current_contract_wasm(pending.new_wasm_hash);
+        env.deployer().update_current_contract_wasm(BytesN::from_array(&env, &pending.wasm_hash));
         env.storage().instance().remove(&PENDING_UPGRADE_KEY);
         Ok(())
     }
 
-    pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+    pub fn get_pending_upgrade(env: Env) -> Option<StagedUpgrade> {
         env.storage().instance().get(&PENDING_UPGRADE_KEY)
     }
 
-    pub fn get_upgrade_timelock_remaining(env: Env) -> Option<u64> {
-        env.storage().instance().get(&PENDING_UPGRADE_KEY).map(|pending: PendingUpgrade| {
-            let elapsed = env.ledger().timestamp().saturating_sub(pending.proposed_at);
-            UPGRADE_DELAY_SECONDS.saturating_sub(elapsed)
+    pub fn get_upgrade_timelock_remaining(env: Env) -> Option<u32> {
+        env.storage().instance().get(&PENDING_UPGRADE_KEY).map(|staged: StagedUpgrade| {
+            5000u32.saturating_sub(env.ledger().sequence().saturating_sub(staged.staged_at))
         })
     }
 
@@ -325,13 +316,15 @@ impl TimeLockedUpgradeContract {
         Ok(())
     }
 
-    pub fn set_value(env: Env, new_value: u64, caller: Address, nonce: u64, salt: Bytes, signature: BytesN<32>, sig_expires_at: u64) -> Result<(), ContractError> {
+    pub fn set_value(env: Env, new_value: u64, caller: Address, nonce: u64, salt: Bytes, signature: BytesN<32>, sig_expires_at: u64, sequence: u64) -> Result<(), ContractError> {
         if env.ledger().timestamp() > sig_expires_at { return Err(ContractError::SignatureExpired); }
         let mut data = Self::get_data(&env)?;
         if data.admin != caller { return Err(ContractError::NotAdmin); }
         if new_value > data.max_fee_ceiling { return Err(ContractError::FeeCeilingExceeded); }
         caller.require_auth();
         consume_nonce(&env, &caller, nonce, salt, signature)?;
+        seq_map.set(caller, sequence);
+        env.storage().instance().set(&SEQUENCE_COUNTER_KEY, &seq_map);
         data.value = new_value;
         env.storage().instance().set(&DATA_KEY, &data);
         Self::_record_heartbeat(&env, symbol_short!("VALUE"));
